@@ -80,14 +80,14 @@ void led_apply(const led_pattern_t *p);
 void led_off(void);
 
 /* Whether the masks held a test value during the last led_apply(); false
- * until led_apply() has run. led_apply() keeps trying for up to LED_WAIT_MS
- * in case the bus needs a moment after opening; *waited_ms, if not NULL,
- * gets how long it tried. False means the registers ignore writes: the bus
- * is still closed, or the OS has locked the LED. On OS 1.4 and later the OS
- * locks it at boot, and only a restart after leaving Press-to-Test is known
- * to leave it unlocked. */
-#define LED_WAIT_MS     20u
-bool led_writable(unsigned *waited_ms);
+ * until led_apply() has run. When it has just opened the bus, led_apply()
+ * tries up to LED_TRIES times in case the bus needs a moment; *tries, if
+ * not NULL, gets how many it took. False means the registers ignore writes: the bus is still
+ * closed, or the OS has locked the LED. On OS 1.4 and later the OS locks it
+ * at boot, and only a restart after leaving Press-to-Test is known to leave
+ * it unlocked. */
+#define LED_TRIES       1000u
+bool led_writable(unsigned *tries);
 
 /* Switches one colour steadily on or off with the force bits and stops its
  * blink engine; the other colour is left alone. For testing by hand. */

@@ -127,7 +127,7 @@ The next restart locks the LED again, so *Run at startup* cannot bring the LED b
 | Gate now | `0x900B0018` now; bit 22 should be *open* |
 | Gate 2 | `0x900B0020`, "possibly another peripheral bus access disable register" according to Hackspire |
 | 90110000 | The first word of the LED's page. The OS uses it, but what it does is unknown |
-| Writes stick | Whether the two mask registers held a test value the last time a pattern was applied. After opening the bus gate, cx-led tries for up to 20 ms; *yes, after 3 ms* means it took that long. *no* means the LED is locked, or the bus is still closed |
+| Writes stick | Whether the two mask registers held a test value the last time a pattern was applied. In case the bus needs a moment after it opens, cx-led tries up to 1000 times right after opening it; *yes, after 25 tries* means it took that many. *no* means the LED is locked, or the bus is still closed |
 | Control, Green, Red | The LED registers: control, then each colour's mask and step length |
 
 When the LED ignores writes, the menu says so at the bottom.

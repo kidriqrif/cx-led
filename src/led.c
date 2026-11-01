@@ -11,23 +11,26 @@ bool led_supported(void)
 static bool gate_seen;
 static uint32_t gate_at_start;
 static bool writable;
-static unsigned waited_ms;
+static unsigned tries;
 
 /* Opens bus access to the LED controller. Other peripherals' bits stay as
- * they are, and the bit is only ever cleared, never set. */
-static void bus_open(void)
+ * they are, and the bit is only ever cleared, never set. Returns true if
+ * the bus was closed until now. */
+static bool bus_open(void)
 {
 	uint32_t gate;
 
 	if (is_cx2)  /* its power management is somewhere else */
-		return;
+		return false;
 	gate = LED_BUS_GATE;
 	if (!gate_seen) {
 		gate_seen = true;
 		gate_at_start = gate;
 	}
-	if (gate & LED_BUS_BIT)
-		LED_BUS_GATE = gate & ~LED_BUS_BIT;
+	if (!(gate & LED_BUS_BIT))
+		return false;
+	LED_BUS_GATE = gate & ~LED_BUS_BIT;
+	return true;
 }
 
 uint32_t led_bus_gate_at_start(void)
@@ -61,9 +64,8 @@ void led_apply(const led_pattern_t *p)
 {
 	uint32_t delay = -clamp_step(p->step);
 	uint32_t keep;
-	unsigned ms;
+	unsigned n, max = bus_open() ? LED_TRIES : 1;
 
-	bus_open();
 	keep = LED_CTRL & ~LED_CTRL_KNOWN;
 
 	/* Stop both engines, load them, then start them with one write so that
@@ -72,17 +74,18 @@ void led_apply(const led_pattern_t *p)
 	 * While both are stopped and forced off, check that the masks hold what
 	 * is written. With the bus closed, reads return the last word read
 	 * anywhere, which will not match these; a locked LED ignores writes. In
-	 * case the bus needs a moment after opening, try again for a while. */
-	for (ms = 0; ; ms++) {
+	 * case the bus needs a moment after opening, try again a number of
+	 * times when it has just been opened. Busy-wait: a build that called
+	 * msleep() here froze at launch. */
+	for (n = 1; ; n++) {
 		LED_CTRL = keep | LED_G_FORCE_OFF | LED_R_FORCE_OFF;
 		LED_G_MASK = 0x5A5AC3C3u;
 		LED_R_MASK = 0xA5A53C3Cu;
 		writable = LED_G_MASK == 0x5A5AC3C3u && LED_R_MASK == 0xA5A53C3Cu;
-		if (writable || ms == LED_WAIT_MS)
+		if (writable || n == max)
 			break;
-		msleep(1);
 	}
-	waited_ms = ms;
+	tries = n;
 
 	LED_G_MASK = p->green;
 	LED_G_DELAY = delay;
@@ -93,10 +96,10 @@ void led_apply(const led_pattern_t *p)
 		| channel_bits(p->red, LED_R_BLINK | LED_R_ITER | LED_R_RUN, LED_R_FORCE_ON, LED_R_FORCE_OFF);
 }
 
-bool led_writable(unsigned *ms)
+bool led_writable(unsigned *n)
 {
-	if (ms)
-		*ms = waited_ms;
+	if (n)
+		*n = tries;
 	return writable;
 }
 

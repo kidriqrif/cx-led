@@ -230,7 +230,7 @@ static bool info_screen(const led_pattern_t *p)
 	int forced = -1;  /* 1 green, 2 red, 3 yellow, 0 off; -1 if none */
 	bool probed = false, gate2_changed = false, page0_changed = false;
 	uint32_t gate2_saved = 0, page0_saved = 0;
-	unsigned waited;
+	unsigned tries;
 
 	keys_settle();
 	for (;;) {
@@ -272,10 +272,10 @@ static bool info_screen(const led_pattern_t *p)
 			probe_line(&y, gate2_changed ? "Gate 2 (U)" : "Gate 2", gate2_changed, gate2_saved, GATE2);
 			probe_line(&y, page0_changed ? "90110000 (K)" : "90110000", page0_changed, page0_saved, LED_PAGE0);
 		}
-		if (!led_writable(&waited))
+		if (!led_writable(&tries))
 			strcpy(buf, "no (LED locked?)");
-		else if (waited)
-			snprintf(buf, sizeof(buf), "yes, after %u ms", waited);
+		else if (tries > 1)
+			snprintf(buf, sizeof(buf), "yes, after %u tries", tries);
 		else
 			strcpy(buf, "yes");
 		info_line(&y, "Writes stick", buf);
