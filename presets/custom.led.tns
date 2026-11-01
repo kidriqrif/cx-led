@@ -1,0 +1,5 @@
+# Your own pattern: G green, R red, Y yellow, . off.
+# 16 steps here, played twice per cycle (patterns of 1, 2, 4, 8, 16 or 32
+# steps repeat to fill the 32 the LED plays).
+pattern=G.G.....R.R.....
+cycle=2

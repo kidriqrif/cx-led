@@ -1,0 +1,4 @@
+# Red, on for the first half of every second.
+effect=blink
+colour=red
+cycle=1

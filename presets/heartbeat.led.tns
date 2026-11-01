@@ -1,0 +1,4 @@
+# A red double pulse once a second.
+effect=heartbeat
+colour=red
+cycle=1
