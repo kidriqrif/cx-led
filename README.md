@@ -142,7 +142,7 @@ When the LED ignores writes, the menu says so at the bottom.
 | K | Invert every bit of `0x90110000`, then apply the pattern again |
 | esc | Back. After a test key, the LED gets its pattern back |
 
-U and K are experiments: press the key again, or leave the screen, to put the old value back. If the calculator freezes, press reset on the back.
+U and K are experiments: press the key again, or leave the screen, to put the old value back. If the calculator freezes, press reset on the back. On a CX with OS 4.5 neither one unlocked the LED: clearing gate 2 (0x818 to 0x0) changed nothing, and 0x90110000 ignored the write.
 
 If the LED stays dark, [open an issue](https://github.com/kidriqrif/cx-led/issues) with the values on this screen and what each test key did.
 
