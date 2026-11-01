@@ -29,7 +29,7 @@
 
 enum {
 	K_UP, K_DOWN, K_LEFT, K_RIGHT, K_PLUS, K_MINUS,  /* repeat when held */
-	K_ENTER, K_ESC, K_MENU, K_G, K_R, K_Y, K_OFF, K_DEL, K_CLEAR,
+	K_ENTER, K_ESC, K_MENU, K_G, K_R, K_Y, K_OFF, K_DEL, K_CLEAR, K_U,
 	K_COUNT
 };
 #define K_LAST_REPEAT K_MINUS
@@ -54,6 +54,7 @@ static bool key_down(int k)
 	                     || isKeyPressed(KEY_NSPIRE_SPACE);
 	case K_DEL:   return isKeyPressed(KEY_NSPIRE_DEL);
 	case K_CLEAR: return isKeyPressed(KEY_NSPIRE_C);
+	case K_U:     return isKeyPressed(KEY_NSPIRE_U);
 	}
 	return false;
 }
@@ -181,42 +182,88 @@ static void info_line(int *y, const char *label, const char *value)
 	*y += 18;
 }
 
-static void info_screen(void)
+/* Hackspire: "possibly another peripheral bus access disable register". */
+#define GATE2 (*(volatile uint32_t *)0x900B0020u)
+
+static void gate_line(int *y, const char *label, uint32_t gate)
 {
+	char buf[24];
+
+	snprintf(buf, sizeof(buf), "0x%08X %s", (unsigned)gate, gate & LED_BUS_BIT ? "shut" : "open");
+	info_line(y, label, buf);
+}
+
+/* Also a test bench for when the LED stays dark: G R Y 0 force a steady
+ * colour, U opens the second bus gate and applies p again. On the way out p
+ * goes back on the LED, before the gate closes. Returns true if p was
+ * applied again. */
+static bool info_screen(const led_pattern_t *p)
+{
+	int forced = -1;  /* 1 green, 2 red, 3 yellow, 0 off; -1 if none */
+	bool probed = false, gate2_open = false;
+	uint32_t gate2_saved = 0;
+
 	keys_settle();
 	for (;;) {
 		int k = key_event();
+		int colour = k == K_G ? 1 : k == K_R ? 2 : k == K_Y ? 3 : k == K_OFF ? 0 : -1;
 		led_regs_t r;
-		char buf[24];
+		char buf[32];
 		int y = 50;
 
-		if (k == K_ESC || k == K_ENTER || k == K_MENU) {
-			keys_settle();
-			return;
+		if (k == K_ESC || k == K_ENTER || k == K_MENU)
+			break;
+		if (colour >= 0) {
+			forced = colour;
+			led_force(true, colour & 1);
+			led_force(false, colour & 2);
+			probed = true;
+		} else if (k == K_U && !is_cx2) {
+			if (!gate2_open)
+				gate2_saved = GATE2;
+			GATE2 = gate2_open ? gate2_saved : 0;
+			gate2_open = !gate2_open;
+			forced = -1;
+			led_apply(p);
+			probed = true;
 		}
 		led_read(&r);
 		gfx_clear(C_BG);
 		draw_header("LED info");
+		if (forced >= 0)
+			draw_led(state_colour(forced & 1, forced & 2), forced != 0);
 		info_line(&y, "Hardware", hw_name());
-		snprintf(buf, sizeof(buf), "revision %u", nl_ndless_rev());
+		snprintf(buf, sizeof(buf), "r%u", nl_ndless_rev());
 		info_line(&y, "Ndless", buf);
-		snprintf(buf, sizeof(buf), "0x%08X", (unsigned)LED_BASE);
-		info_line(&y, "Registers", buf);
+		if (is_cx2) {
+			info_line(&y, "Bus gates", "not on the CX II");
+		} else {
+			gate_line(&y, "Gate at start", led_bus_gate_at_start());
+			gate_line(&y, "Gate now", LED_BUS_GATE);
+			if (gate2_open)
+				snprintf(buf, sizeof(buf), "0x%X to 0x%X", (unsigned)gate2_saved, (unsigned)GATE2);
+			else
+				snprintf(buf, sizeof(buf), "0x%08X", (unsigned)GATE2);
+			info_line(&y, gate2_open ? "Gate 2 (U)" : "Gate 2", buf);
+		}
+		info_line(&y, "Writes stick", led_readback_ok() ? "yes" : "no");
 		snprintf(buf, sizeof(buf), "0x%08X", (unsigned)r.ctrl);
 		info_line(&y, "Control", buf);
-		snprintf(buf, sizeof(buf), "0x%08X", (unsigned)r.g_mask);
-		info_line(&y, "Green mask", buf);
-		snprintf(buf, sizeof(buf), "%u ticks", (unsigned)-r.g_delay);
-		info_line(&y, "Green step", buf);
-		snprintf(buf, sizeof(buf), "0x%08X", (unsigned)r.r_mask);
-		info_line(&y, "Red mask", buf);
-		snprintf(buf, sizeof(buf), "%u ticks", (unsigned)-r.r_delay);
-		info_line(&y, "Red step", buf);
-		gfx_text(16, y + 6, "Steps assume a 32768 Hz clock.", C_FAINT, 1);
-		draw_footer("esc: back");
+		snprintf(buf, sizeof(buf), "0x%08X, step %u", (unsigned)r.g_mask, (unsigned)-r.g_delay);
+		info_line(&y, "Green", buf);
+		snprintf(buf, sizeof(buf), "0x%08X, step %u", (unsigned)r.r_mask, (unsigned)-r.r_delay);
+		info_line(&y, "Red", buf);
+		draw_footer(is_cx2 ? "G R Y 0: test LED  esc: back"
+		                   : "G R Y 0: test LED  U: gate 2  esc: back");
 		gfx_present();
 		msleep(FRAME_MS);
 	}
+	if (probed)
+		led_apply(p);
+	if (gate2_open)
+		GATE2 = gate2_saved;
+	keys_settle();
+	return probed;
 }
 
 /* ---- pattern editor ---- */
@@ -485,10 +532,6 @@ static bool row_action(selection_t *s, bool *startup, int row, int k)
 		if (!key_repeated(k))
 			*startup = !*startup;
 		return false;
-	case ROW_INFO:
-		if (k != K_LEFT && !key_repeated(k))
-			info_screen();
-		return false;
 	}
 	return false;
 }
@@ -511,8 +554,10 @@ bool ui_run(selection_t *s, bool *startup)
 			break;
 		if (k == K_UP || k == K_DOWN) {
 			row = row_move(s, row, k == K_UP ? -1 : 1);
-		} else if (k == K_MENU) {
-			info_screen();
+		} else if (k == K_MENU || (row == ROW_INFO && (k == K_RIGHT || k == K_ENTER)
+		                            && !key_repeated(k))) {
+			if (info_screen(&p))
+				ticks = 0;
 		} else if ((k == K_LEFT || k == K_RIGHT || k == K_ENTER) && row_action(s, startup, row, k)) {
 			selection_pattern(s, &p);
 			led_apply(&p);

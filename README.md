@@ -2,7 +2,7 @@
 
 An [Ndless](https://ndless.me) program that controls the status LED of the TI-Nspire CX. Choose a colour and a flash pattern; the LED keeps playing it after you leave the program, while you use the calculator and run other programs.
 
-> **Status:** written from the published register documentation but not yet tried on a calculator. The CX II has not been tested; cx-led asks before it touches the LED there.
+> **Status:** on its first test on a real CX the LED stayed dark. This version opens the LED's bus gate first (see [If the LED stays dark](#if-the-led-stays-dark)) and has test keys in *LED info*; it has not been tried on hardware yet. The CX II has not been tested; cx-led asks before it touches the LED there.
 
 ## How it keeps running in the background
 
@@ -34,7 +34,7 @@ Every change goes to the LED at once. The large dot in the corner and the timeli
 - **Cycle:** the time for one pass of the 32 steps, from 0.25 s to 32 s.
 - **Edit pattern:** draw your own pattern. The editor starts from the current effect's steps; a mixed *Solid* colour starts as plain green, red or yellow, and *Off* brings back your last custom pattern.
 - **Run at startup:** apply this setting every time Ndless starts.
-- **LED info:** the hardware, the Ndless revision and the live register values.
+- **LED info:** the live register values, the bus gates and test keys; see [If the LED stays dark](#if-the-led-stays-dark).
 
 | Effect | Preset key | What it does |
 |---|---|---|
@@ -96,6 +96,31 @@ Opening presets works through a file association: the first time the menu opens,
 
 Turning *Run at startup* on writes the current setting to `ndless/startup/cxled.led.tns`. Ndless opens the files in that folder when it starts, and cx-led applies the setting without showing anything. While the option is on, the startup setting follows the current one: leaving the menu or opening a preset updates it. Turn the option off, or delete the file, to stop. Holding esc while Ndless starts skips the startup folder.
 
+## If the LED stays dark
+
+The power management register `0x900B0018` can cut bus access to peripherals, one bit each. While a peripheral's bit is set, its registers ignore writes, and reading them returns the last word read on the bus. [Hackspire](https://hackspire.org/Memory-mapped_IO_ports_on_CX) lists bit 22 for the LED, with a question mark. If the OS leaves that bit set, nothing written to the LED arrives, so before every LED access cx-led clears bit 22, and only that bit. The CX II keeps its power management somewhere else, and cx-led leaves it alone.
+
+*LED info* (the menu key, or the last row of the menu) shows what happened:
+
+| Row | Meaning |
+|---|---|
+| Gate at start | `0x900B0018` when this run of cx-led started. *shut* means bit 22 was set. Only the first run after the calculator starts shows the OS's own setting; *Run at startup* and presets count as runs |
+| Gate now | `0x900B0018` now; bit 22 should be *open* |
+| Gate 2 | `0x900B0020`, "possibly another peripheral bus access disable register" according to Hackspire |
+| Writes stick | Whether the two mask registers held a test value the last time a pattern was applied. *no* means the bus is still closed, or the LED controller is not at `0x90110B00` |
+| Control, Green, Red | The LED registers: control, then each colour's mask and step length |
+
+It also has test keys:
+
+| Key | Action |
+|---|---|
+| G R Y | Force the LED steadily green, red or yellow. The dot in the corner shows the colour the LED should have |
+| 0 | Force the LED off |
+| U | Clear every bit of `0x900B0020`, then apply the pattern again. Press U again, or leave the screen, to put the old value back. Experimental: if the calculator freezes, press reset on the back |
+| esc | Back. After a test key, the LED gets its pattern back |
+
+If the LED stays dark, [open an issue](https://github.com/kidriqrif/cx-led/issues) with the values on this screen and what each test key did.
+
 ## Files cx-led writes
 
 All paths are inside My Documents.
@@ -108,7 +133,7 @@ All paths are inside My Documents.
 
 ## Caveats
 
-- **Untested hardware:** the program follows the register documentation on [Hackspire](https://hackspire.org/Memory-mapped_IO_ports_on_CX), but nobody has run it on a calculator yet.
+- **Untested hardware:** the program follows the register documentation on [Hackspire](https://hackspire.org/Memory-mapped_IO_ports_on_CX). The first version, which did not open the bus gate, left the LED dark on a CX; this one has not been tried yet.
 - **CX II:** its LED controller is undocumented. cx-led asks before using it. It remembers a yes; after a no it asks again next time. At startup it does nothing on a CX II until you have said yes.
 - **The OS uses the LED too:** if it reprograms the controller, your pattern stops until cx-led or a preset runs again.
 - **Battery:** it is not known whether the LED keeps running while the calculator is off. If you are not sure, open the `off` preset before putting the calculator away. With *Run at startup* on, that also makes *Off* the startup setting.
@@ -128,7 +153,7 @@ led_apply(&p);   /* returns at once, the LED keeps going */
 led_off();
 ```
 
-A mask is played from bit 31 down to bit 0, one bit per step. Red and green on together look yellow. `led_read()` and `led_write()` save and restore the raw registers, for a program that wants to put the LED back the way it found it.
+A mask is played from bit 31 down to bit 0, one bit per step. Red and green on together look yellow. On the CX, every function that touches the registers opens the LED's bus gate first. `led_read()` and `led_write()` save and restore the raw registers, for a program that wants to put the LED back the way it found it. `led_force()` switches one colour steadily on or off, and `led_readback_ok()` tells whether the mask registers held a test value during the last `led_apply()`.
 
 ### Register map
 
@@ -153,6 +178,8 @@ From Hackspire. Offsets are from `0x90110B00`.
 | 9 | Red follows its mask |
 | 10 and 12 | Red steps through its mask (clear 12 before changing the mask or step) |
 | 13 | Red forced on, or off when bit 4 is set (unclear; `led_apply()` clears it) |
+
+Bus access: Hackspire lists bit 22 of `0x900B0018` ("disable bus access to peripherals") for the LED, with a question mark. While the bit is set, the registers above ignore writes, and reads return the last word read on the bus.
 
 ## Building
 

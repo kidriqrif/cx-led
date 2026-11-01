@@ -1,5 +1,6 @@
 /*
- * led.h - driver for the TI-Nspire CX status LED (the one above the screen).
+ * led.h - driver for the TI-Nspire CX status LED (the small light on top of
+ * the handheld).
  *
  * The LED controller at 0x90110B00 has a small blink engine for each colour
  * channel: a 32-bit on/off mask that the hardware plays back from bit 31 to
@@ -40,6 +41,15 @@
 #define LED_R_BIT13     (1u << 13)  /* forces red on (off if bit 4 is set); led_apply() clears it */
 #define LED_CTRL_KNOWN  0x367Fu     /* bits 0-6, 9, 10, 12, 13 */
 
+/* Power management can cut bus access to a peripheral: its registers then
+ * ignore writes, and reads return the last word read on the bus. Hackspire
+ * lists bit 22 for the LED, with a question mark. If the OS leaves it set,
+ * nothing written to the LED arrives, so every function here that touches
+ * the registers clears it first. CX only: the CX II's power management is
+ * somewhere else, and it is left alone. */
+#define LED_BUS_GATE    (*(volatile uint32_t *)0x900B0018u)
+#define LED_BUS_BIT     (1u << 22)
+
 #define LED_STEPS       32
 #define LED_HZ          32768u      /* assumed step clock */
 #define LED_STEP_OS     2048u       /* step length the OS uses: 62.5 ms */
@@ -56,6 +66,10 @@ typedef struct {
 	uint32_t ctrl, g_mask, g_delay, r_mask, r_delay;
 } led_regs_t;
 
+/* The bus gate register as it was before this program first touched it
+ * (0 on the CX II). */
+uint32_t led_bus_gate_at_start(void);
+
 /* False on the CX II: its ASIC is new and nobody has checked that the LED
  * controller works the same way there. Ask the user before going ahead. */
 bool led_supported(void);
@@ -64,6 +78,15 @@ bool led_supported(void);
  * zeros uses the force bits instead of the blink engine. */
 void led_apply(const led_pattern_t *p);
 void led_off(void);
+
+/* Whether the masks held a test value during the last led_apply(); false
+ * until led_apply() has run. False points at the bus gate or a wrong
+ * address, not at the LED itself. */
+bool led_readback_ok(void);
+
+/* Switches one colour steadily on or off with the force bits and stops its
+ * blink engine; the other colour is left alone. For testing by hand. */
+void led_force(bool green, bool on);
 
 void led_read(led_regs_t *r);
 void led_write(const led_regs_t *r);
