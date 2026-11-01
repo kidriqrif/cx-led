@@ -2,7 +2,7 @@
 
 An [Ndless](https://ndless.me) program that controls the status LED of the TI-Nspire CX. Choose a colour and a flash pattern; the LED keeps playing it after you leave the program, while you use the calculator and run other programs.
 
-> **Status:** on its first test on a real CX the LED stayed dark. This version opens the LED's bus gate first (see [If the LED stays dark](#if-the-led-stays-dark)) and has test keys in *LED info*; it has not been tried on hardware yet. The CX II has not been tested; cx-led asks before it touches the LED there.
+> **Status:** on a real CX with OS 4.5 the LED stays dark: its registers can be read but ignore writes. The OS most likely locks the LED, as it does on older models; see [If the LED stays dark](#if-the-led-stays-dark) for how to check, and for the one known way to unlock it. The CX II has not been tested; cx-led asks before it touches the LED there.
 
 ## How it keeps running in the background
 
@@ -98,26 +98,51 @@ Turning *Run at startup* on writes the current setting to `ndless/startup/cxled.
 
 ## If the LED stays dark
 
-The power management register `0x900B0018` can cut bus access to peripherals, one bit each. While a peripheral's bit is set, its registers ignore writes, and reading them returns the last word read on the bus. [Hackspire](https://hackspire.org/Memory-mapped_IO_ports_on_CX) lists bit 22 for the LED, with a question mark. If the OS leaves that bit set, nothing written to the LED arrives, so before every LED access cx-led clears bit 22, and only that bit. The CX II keeps its power management somewhere else, and cx-led leaves it alone.
+Two things can stop what cx-led writes from reaching the LED.
+
+**The bus gate.** The power management register `0x900B0018` can cut bus access to peripherals, one bit each. While a peripheral's bit is set, its registers ignore writes, and reading them returns the last word read on the bus. [Hackspire](https://hackspire.org/Memory-mapped_IO_ports_on_CX) lists bit 22 for the LED, with a question mark. On a CX with OS 4.5 the OS leaves that bit set, so before every LED access cx-led clears bit 22, and only that bit. The registers can then be read. The CX II keeps its power management somewhere else, and cx-led leaves it alone.
+
+**The lock.** On the first TI-Nspire models, OS 1.4 and later lock the LED at boot: its registers ignore writes, so no program can change what it shows. This is described in the readme of [Norse](https://www.ticalc.org/archives/files/fileinfo/434/43429.html), a 2010 program that sends messages with the LED, which also quotes TI's Press-to-Test documentation: the flashing LED "is hardware-secure and cannot be impacted by coded software". The Linux driver for this LED controller also checks for "read-only" registers. On a CX with OS 4.5 the registers ignore writes even with the bus gate open, which fits a lock.
+
+### Unlocking the LED
+
+The only known way is the one the Norse readme describes for OS 1.4 to 2.0.1: enter Press-to-Test, then leave it. The calculator restarts when it leaves Press-to-Test, and after that restart the LED stays unlocked until the next restart. Turning the calculator off and on is not a restart; a reset, a crash or installing an OS is. This has not been tested on a CX.
+
+Before you try it, know that while Press-to-Test is on your documents are hidden, and that leaving it needs a computer with TI-Nspire software or a second TI-Nspire. Documents made during Press-to-Test are deleted when it ends.
+
+1. Turn the calculator off. Hold **esc** and **home/on** until the Press-to-Test screen opens, then choose *Enter Press-to-Test*. The calculator restarts in Press-to-Test and its LED starts blinking.
+2. Leave Press-to-Test from the computer or the other calculator, as TI's [Press-to-Test guidebook](https://education.ti.com/-/media/ti/files/aus-nz/downloads/pdf/ti-nspire_press-to-test_guidebook_en.pdf) describes. The calculator restarts.
+3. If Ndless is gone after the restarts, install it again. Then run cx-led and open *LED info*: *Writes stick* should say *yes*.
+
+The next restart locks the LED again, so *Run at startup* cannot bring the LED back after a restart; only Press-to-Test can.
+
+### LED info
 
 *LED info* (the menu key, or the last row of the menu) shows what happened:
 
 | Row | Meaning |
 |---|---|
+| Model | The calculator and the Ndless version |
 | Gate at start | `0x900B0018` when this run of cx-led started. *shut* means bit 22 was set. Only the first run after the calculator starts shows the OS's own setting; *Run at startup* and presets count as runs |
 | Gate now | `0x900B0018` now; bit 22 should be *open* |
 | Gate 2 | `0x900B0020`, "possibly another peripheral bus access disable register" according to Hackspire |
-| Writes stick | Whether the two mask registers held a test value the last time a pattern was applied. *no* means the bus is still closed, or the LED controller is not at `0x90110B00` |
+| 90110000 | The first word of the LED's page. The OS uses it, but what it does is unknown |
+| Writes stick | Whether the two mask registers held a test value the last time a pattern was applied. After opening the bus gate, cx-led tries for up to 20 ms; *yes, after 3 ms* means it took that long. *no* means the LED is locked, or the bus is still closed |
 | Control, Green, Red | The LED registers: control, then each colour's mask and step length |
 
-It also has test keys:
+When the LED ignores writes, the menu says so at the bottom.
+
+*LED info* also has test keys:
 
 | Key | Action |
 |---|---|
 | G R Y | Force the LED steadily green, red or yellow. The dot in the corner shows the colour the LED should have |
 | 0 | Force the LED off |
-| U | Clear every bit of `0x900B0020`, then apply the pattern again. Press U again, or leave the screen, to put the old value back. Experimental: if the calculator freezes, press reset on the back |
+| U | Clear every bit of `0x900B0020`, then apply the pattern again |
+| K | Invert every bit of `0x90110000`, then apply the pattern again |
 | esc | Back. After a test key, the LED gets its pattern back |
+
+U and K are experiments: press the key again, or leave the screen, to put the old value back. If the calculator freezes, press reset on the back.
 
 If the LED stays dark, [open an issue](https://github.com/kidriqrif/cx-led/issues) with the values on this screen and what each test key did.
 
@@ -133,7 +158,7 @@ All paths are inside My Documents.
 
 ## Caveats
 
-- **Untested hardware:** the program follows the register documentation on [Hackspire](https://hackspire.org/Memory-mapped_IO_ports_on_CX). The first version, which did not open the bus gate, left the LED dark on a CX; this one has not been tried yet.
+- **Locked LED:** the program follows the register documentation on [Hackspire](https://hackspire.org/Memory-mapped_IO_ports_on_CX), but on a CX with OS 4.5 the LED ignores writes. It only works once the LED is unlocked; see [Unlocking the LED](#unlocking-the-led).
 - **CX II:** its LED controller is undocumented. cx-led asks before using it. It remembers a yes; after a no it asks again next time. At startup it does nothing on a CX II until you have said yes.
 - **The OS uses the LED too:** if it reprograms the controller, your pattern stops until cx-led or a preset runs again.
 - **Battery:** it is not known whether the LED keeps running while the calculator is off. If you are not sure, open the `off` preset before putting the calculator away. With *Run at startup* on, that also makes *Off* the startup setting.
@@ -153,7 +178,7 @@ led_apply(&p);   /* returns at once, the LED keeps going */
 led_off();
 ```
 
-A mask is played from bit 31 down to bit 0, one bit per step. Red and green on together look yellow. On the CX, every function that touches the registers opens the LED's bus gate first. `led_read()` and `led_write()` save and restore the raw registers, for a program that wants to put the LED back the way it found it. `led_force()` switches one colour steadily on or off, and `led_readback_ok()` tells whether the mask registers held a test value during the last `led_apply()`.
+A mask is played from bit 31 down to bit 0, one bit per step. Red and green on together look yellow. On the CX, every function that touches the registers opens the LED's bus gate first. `led_read()` and `led_write()` save and restore the raw registers, for a program that wants to put the LED back the way it found it. `led_force()` switches one colour steadily on or off, and `led_writable()` tells whether the mask registers held a test value during the last `led_apply()`, and how long that took.
 
 ### Register map
 

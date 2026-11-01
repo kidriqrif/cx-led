@@ -10,7 +10,8 @@ bool led_supported(void)
 
 static bool gate_seen;
 static uint32_t gate_at_start;
-static bool readback_ok;
+static bool writable;
+static unsigned waited_ms;
 
 /* Opens bus access to the LED controller. Other peripherals' bits stay as
  * they are, and the bit is only ever cleared, never set. */
@@ -60,20 +61,28 @@ void led_apply(const led_pattern_t *p)
 {
 	uint32_t delay = -clamp_step(p->step);
 	uint32_t keep;
+	unsigned ms;
 
 	bus_open();
 	keep = LED_CTRL & ~LED_CTRL_KNOWN;
 
 	/* Stop both engines, load them, then start them with one write so that
-	 * two-colour patterns stay in phase. */
-	LED_CTRL = keep | LED_G_FORCE_OFF | LED_R_FORCE_OFF;
-
-	/* While both are stopped and forced off, check that the masks hold what
+	 * two-colour patterns stay in phase.
+	 *
+	 * While both are stopped and forced off, check that the masks hold what
 	 * is written. With the bus closed, reads return the last word read
-	 * anywhere, which will not match these. */
-	LED_G_MASK = 0x5A5AC3C3u;
-	LED_R_MASK = 0xA5A53C3Cu;
-	readback_ok = LED_G_MASK == 0x5A5AC3C3u && LED_R_MASK == 0xA5A53C3Cu;
+	 * anywhere, which will not match these; a locked LED ignores writes. In
+	 * case the bus needs a moment after opening, try again for a while. */
+	for (ms = 0; ; ms++) {
+		LED_CTRL = keep | LED_G_FORCE_OFF | LED_R_FORCE_OFF;
+		LED_G_MASK = 0x5A5AC3C3u;
+		LED_R_MASK = 0xA5A53C3Cu;
+		writable = LED_G_MASK == 0x5A5AC3C3u && LED_R_MASK == 0xA5A53C3Cu;
+		if (writable || ms == LED_WAIT_MS)
+			break;
+		msleep(1);
+	}
+	waited_ms = ms;
 
 	LED_G_MASK = p->green;
 	LED_G_DELAY = delay;
@@ -84,9 +93,11 @@ void led_apply(const led_pattern_t *p)
 		| channel_bits(p->red, LED_R_BLINK | LED_R_ITER | LED_R_RUN, LED_R_FORCE_ON, LED_R_FORCE_OFF);
 }
 
-bool led_readback_ok(void)
+bool led_writable(unsigned *ms)
 {
-	return readback_ok;
+	if (ms)
+		*ms = waited_ms;
+	return writable;
 }
 
 void led_force(bool green, bool on)

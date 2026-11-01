@@ -16,6 +16,7 @@
 #define C_DIM     RGB(128, 134, 148)
 #define C_FAINT   RGB( 72,  76,  88)
 #define C_UNLIT   RGB( 46,  50,  60)
+#define C_WARN    RGB(255, 176,  64)
 #define C_WHITE   RGB(255, 255, 255)
 
 /* The loop sleeps FRAME_MS and drawing takes a few ms more, so the on-screen
@@ -29,7 +30,7 @@
 
 enum {
 	K_UP, K_DOWN, K_LEFT, K_RIGHT, K_PLUS, K_MINUS,  /* repeat when held */
-	K_ENTER, K_ESC, K_MENU, K_G, K_R, K_Y, K_OFF, K_DEL, K_CLEAR, K_U,
+	K_ENTER, K_ESC, K_MENU, K_G, K_R, K_Y, K_OFF, K_DEL, K_CLEAR, K_U, K_K,
 	K_COUNT
 };
 #define K_LAST_REPEAT K_MINUS
@@ -55,6 +56,7 @@ static bool key_down(int k)
 	case K_DEL:   return isKeyPressed(KEY_NSPIRE_DEL);
 	case K_CLEAR: return isKeyPressed(KEY_NSPIRE_C);
 	case K_U:     return isKeyPressed(KEY_NSPIRE_U);
+	case K_K:     return isKeyPressed(KEY_NSPIRE_K);
 	}
 	return false;
 }
@@ -144,9 +146,9 @@ static void draw_header(const char *title)
 	gfx_text(14, 4, title, C_TEXT, 2);
 }
 
-static void draw_footer(const char *text)
+static void draw_footer(const char *text, uint16_t c)
 {
-	gfx_text((GFX_W - gfx_text_width(text, 1)) / 2, GFX_H - 18, text, C_DIM, 1);
+	gfx_text((GFX_W - gfx_text_width(text, 1)) / 2, GFX_H - 18, text, c, 1);
 }
 
 static int step_state(const selection_t *s, int i)
@@ -167,12 +169,12 @@ static void set_step(selection_t *s, int i, int state)
 static const char *hw_name(void)
 {
 	if (is_classic)
-		return "TI-Nspire";
+		return "Classic";
 	if (is_cx2)
-		return "TI-Nspire CX II";
+		return "CX II";
 	if (is_cm)
-		return "TI-Nspire CM";
-	return "TI-Nspire CX";
+		return "CM";
+	return "CX";
 }
 
 static void info_line(int *y, const char *label, const char *value)
@@ -185,6 +187,10 @@ static void info_line(int *y, const char *label, const char *value)
 /* Hackspire: "possibly another peripheral bus access disable register". */
 #define GATE2 (*(volatile uint32_t *)0x900B0020u)
 
+/* The first word of the LED's page. The OS uses it (the Firebird emulator
+ * accepts reads and writes there), but what it does is unknown. */
+#define LED_PAGE0 (*(volatile uint32_t *)0x90110000u)
+
 static void gate_line(int *y, const char *label, uint32_t gate)
 {
 	char buf[24];
@@ -193,15 +199,38 @@ static void gate_line(int *y, const char *label, uint32_t gate)
 	info_line(y, label, buf);
 }
 
+/* A register a test key changed: its value, or the old and the new one. */
+static void probe_line(int *y, const char *label, bool changed, uint32_t saved, uint32_t now)
+{
+	char buf[32];
+
+	if (changed)
+		snprintf(buf, sizeof(buf), "0x%X to 0x%X", (unsigned)saved, (unsigned)now);
+	else
+		snprintf(buf, sizeof(buf), "0x%08X", (unsigned)now);
+	info_line(y, label, buf);
+}
+
+/* Flips a register for a test, or puts it back: a test key's job. */
+static void probe_toggle(volatile uint32_t *reg, bool *changed, uint32_t *saved, uint32_t test)
+{
+	if (!*changed)
+		*saved = *reg;
+	*reg = *changed ? *saved : test;
+	*changed = !*changed;
+}
+
 /* Also a test bench for when the LED stays dark: G R Y 0 force a steady
- * colour, U opens the second bus gate and applies p again. On the way out p
- * goes back on the LED, before the gate closes. Returns true if p was
- * applied again. */
+ * colour; U clears the second bus gate and K inverts the first word of the
+ * LED's page, then each applies p again. On the way out p goes back on the
+ * LED, before those registers are put back. Returns true if p was applied
+ * again. */
 static bool info_screen(const led_pattern_t *p)
 {
 	int forced = -1;  /* 1 green, 2 red, 3 yellow, 0 off; -1 if none */
-	bool probed = false, gate2_open = false;
-	uint32_t gate2_saved = 0;
+	bool probed = false, gate2_changed = false, page0_changed = false;
+	uint32_t gate2_saved = 0, page0_saved = 0;
+	unsigned waited;
 
 	keys_settle();
 	for (;;) {
@@ -213,16 +242,17 @@ static bool info_screen(const led_pattern_t *p)
 
 		if (k == K_ESC || k == K_ENTER || k == K_MENU)
 			break;
+		led_read(&r);  /* opens the bus for LED_PAGE0 */
 		if (colour >= 0) {
 			forced = colour;
 			led_force(true, colour & 1);
 			led_force(false, colour & 2);
 			probed = true;
-		} else if (k == K_U && !is_cx2) {
-			if (!gate2_open)
-				gate2_saved = GATE2;
-			GATE2 = gate2_open ? gate2_saved : 0;
-			gate2_open = !gate2_open;
+		} else if ((k == K_U || k == K_K) && !is_cx2) {
+			if (k == K_U)
+				probe_toggle(&GATE2, &gate2_changed, &gate2_saved, 0);
+			else
+				probe_toggle(&LED_PAGE0, &page0_changed, &page0_saved, ~LED_PAGE0);
 			forced = -1;
 			led_apply(p);
 			probed = true;
@@ -232,21 +262,23 @@ static bool info_screen(const led_pattern_t *p)
 		draw_header("LED info");
 		if (forced >= 0)
 			draw_led(state_colour(forced & 1, forced & 2), forced != 0);
-		info_line(&y, "Hardware", hw_name());
-		snprintf(buf, sizeof(buf), "r%u", nl_ndless_rev());
-		info_line(&y, "Ndless", buf);
+		snprintf(buf, sizeof(buf), "%s, Ndless r%u", hw_name(), nl_ndless_rev());
+		info_line(&y, "Model", buf);
 		if (is_cx2) {
 			info_line(&y, "Bus gates", "not on the CX II");
 		} else {
 			gate_line(&y, "Gate at start", led_bus_gate_at_start());
 			gate_line(&y, "Gate now", LED_BUS_GATE);
-			if (gate2_open)
-				snprintf(buf, sizeof(buf), "0x%X to 0x%X", (unsigned)gate2_saved, (unsigned)GATE2);
-			else
-				snprintf(buf, sizeof(buf), "0x%08X", (unsigned)GATE2);
-			info_line(&y, gate2_open ? "Gate 2 (U)" : "Gate 2", buf);
+			probe_line(&y, gate2_changed ? "Gate 2 (U)" : "Gate 2", gate2_changed, gate2_saved, GATE2);
+			probe_line(&y, page0_changed ? "90110000 (K)" : "90110000", page0_changed, page0_saved, LED_PAGE0);
 		}
-		info_line(&y, "Writes stick", led_readback_ok() ? "yes" : "no");
+		if (!led_writable(&waited))
+			strcpy(buf, "no (LED locked?)");
+		else if (waited)
+			snprintf(buf, sizeof(buf), "yes, after %u ms", waited);
+		else
+			strcpy(buf, "yes");
+		info_line(&y, "Writes stick", buf);
 		snprintf(buf, sizeof(buf), "0x%08X", (unsigned)r.ctrl);
 		info_line(&y, "Control", buf);
 		snprintf(buf, sizeof(buf), "0x%08X, step %u", (unsigned)r.g_mask, (unsigned)-r.g_delay);
@@ -254,13 +286,15 @@ static bool info_screen(const led_pattern_t *p)
 		snprintf(buf, sizeof(buf), "0x%08X, step %u", (unsigned)r.r_mask, (unsigned)-r.r_delay);
 		info_line(&y, "Red", buf);
 		draw_footer(is_cx2 ? "G R Y 0: test LED  esc: back"
-		                   : "G R Y 0: test LED  U: gate 2  esc: back");
+		                   : "G R Y 0: test  U K: probe  esc: back", C_DIM);
 		gfx_present();
 		msleep(FRAME_MS);
 	}
 	if (probed)
 		led_apply(p);
-	if (gate2_open)
+	if (page0_changed)
+		LED_PAGE0 = page0_saved;
+	if (gate2_changed)
 		GATE2 = gate2_saved;
 	keys_settle();
 	return probed;
@@ -497,7 +531,10 @@ static void draw_menu(const selection_t *s, bool startup, int row, const led_pat
 	draw_row(ROW_INFO, row == ROW_INFO, true, "LED info", NULL, NULL);
 
 	draw_timeline(s, p, s->effect == EFFECT_SOLID || effects[s->effect].type == FX_OFF ? -1 : (int)playing);
-	draw_footer("esc: exit, the LED keeps running");
+	if (led_writable(NULL))
+		draw_footer("esc: exit, the LED keeps running", C_DIM);
+	else
+		draw_footer("The LED ignores writes: see LED info", C_WARN);
 }
 
 /* Returns true if the selection changed. */
